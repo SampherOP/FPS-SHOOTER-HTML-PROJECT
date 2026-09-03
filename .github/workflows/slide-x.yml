@@ -22,17 +22,22 @@ jobs:
           s = p.read_text(encoding='utf-8')
           old = s
           replacements = {
+              "e.code==='ControlLeft'": "e.code==='KeyX'",
+              "e.code==='ControlRight'": "e.code==='KeyX'",
+              'e.code==="ControlLeft"': 'e.code==="KeyX"',
+              'e.code==="ControlRight"': 'e.code==="KeyX"',
               "e.code==='Control'": "e.code==='KeyX'",
-              "e.code===\"Control\"": "e.code===\"KeyX\"",
+              'e.code==="Control"': 'e.code==="KeyX"',
               "e.key==='Control'": "e.key==='x'",
-              "e.key===\"Control\"": "e.key===\"x\"",
+              'e.key==="Control"': 'e.key==="x"',
               "e.key==='ctrl'": "e.key==='x'",
-              "e.key===\"ctrl\"": "e.key===\"x\"",
+              'e.key==="ctrl"': 'e.key==="x"',
+              "keys.ControlLeft": "keys.KeyX",
+              "keys.ControlRight": "keys.KeyX",
+              "keys.Control": "keys.KeyX",
           }
           for a,b in replacements.items():
               s = s.replace(a,b)
-          # Common hold checks using the key map.
-          s = s.replace("keys.Control", "keys.KeyX")
           if s == old:
               raise SystemExit('No Ctrl slide binding found; refusing to change unrelated code.')
           p.write_text(s, encoding='utf-8')
