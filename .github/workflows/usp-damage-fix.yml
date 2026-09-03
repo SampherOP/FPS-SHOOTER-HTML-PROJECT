@@ -28,3 +28,4 @@ jobs:
           git add krunker-clone/game.js
           git diff --cached --quiet || git commit -m 'Fix USP damage and rename Desert Eagle'
           git push
+# retrigger patch
