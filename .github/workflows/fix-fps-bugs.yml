@@ -1,4 +1,4 @@
-name: Fix FPS gameplay bugs
+name: Fix FPS gameplay polish
 on:
   push:
     branches: [main]
@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Patch recoil, hands and bullet collision
+      - name: Patch FPS gameplay, reload grip and team models
         shell: python
         run: |
           from pathlib import Path
@@ -18,62 +18,107 @@ jobs:
           p=Path('krunker-clone/game.js')
           s=p.read_text(encoding='utf-8')
 
-          # 1) Recoil: mouse pitch uses pitch -= movementY, so negative pitch is up.
-          s=s.replace("pitch=Math.min(1.3,pitch-w.recoil*(aiming?.55:1));", "pitch=Math.max(-1.3,pitch-w.recoil*(aiming?.55:1));")
+          # Recoil must move the camera upward.
+          s=s.replace("pitch=Math.max(-1.3,pitch+w.recoil*(aiming?.55:1));", "pitch=Math.max(-1.3,pitch-w.recoil*(aiming?.55:1));")
+          s=s.replace("pitch=Math.min(1.3,pitch+w.recoil*(aiming?.55:1));", "pitch=Math.max(-1.3,pitch-w.recoil*(aiming?.55:1));")
 
-          # 2) Make the first-person hands actually wrap the weapon instead of floating beside it.
+          # Stable FPS hands: both hands are attached to fixed weapon grip/support points.
           hands=r'''function addViewHands(){
-            const skin=mat(0xb87858,.82,.02),sleeve=mat(0x252b30,.85,.03);
+            const skin=mat(0xb87858,.82,.02),sleeve=mat(0x252b30,.86,.03),glove=mat(0x343a40,.72,.08);
             const rig=new T.Group();rig.name='TWO_HAND_RIG';
-            const armR=new T.Mesh(new T.BoxGeometry(.16,.16,.48),sleeve);armR.position.set(.18,-.015,.02);armR.rotation.set(-.38,.05,-.16);
-            const handR=new T.Mesh(new T.BoxGeometry(.18,.13,.22),skin);handR.position.set(.06,-.035,-.25);handR.rotation.set(-.15,0,-.08);
-            const armL=new T.Mesh(new T.BoxGeometry(.16,.16,.50),sleeve);armL.position.set(-.18,-.015,-.12);armL.rotation.set(-.52,-.05,.16);
-            const handL=new T.Mesh(new T.BoxGeometry(.18,.13,.22),skin);handL.position.set(-.07,-.025,-.43);handL.rotation.set(-.12,0,.08);
-            rig.add(armR,handR,armL,handL);viewGun.add(rig);return rig
+            function arm(a,b,r=.075){const v=new T.Vector3().subVectors(b,a);const m=new T.Mesh(new T.CylinderGeometry(r,r,v.length(),8),sleeve);m.position.copy(a).add(b).multiplyScalar(.5);m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),v.normalize());return m}
+            const rElbow=new T.Vector3(.30,-.42,.10),rWrist=new T.Vector3(.015,-.205,-.04);
+            const lElbow=new T.Vector3(-.30,-.40,.10),lWrist=new T.Vector3(-.075,-.015,-.48);
+            rig.add(arm(rElbow,rWrist),arm(lElbow,lWrist));
+            const handR=new T.Mesh(new T.BoxGeometry(.19,.14,.25),skin);handR.position.set(.015,-.205,-.075);handR.rotation.set(-.18,0,-.04);handR.name='RIGHT_GRIP_HAND';
+            const handL=new T.Mesh(new T.BoxGeometry(.19,.14,.25),skin);handL.position.set(-.075,-.015,-.49);handL.rotation.set(-.12,0,.04);handL.name='LEFT_SUPPORT_HAND';
+            const cuffR=new T.Mesh(new T.CylinderGeometry(.09,.09,.10,8),glove);cuffR.rotation.z=Math.PI/2;cuffR.position.set(.015,-.205,.035);
+            const cuffL=new T.Mesh(new T.CylinderGeometry(.09,.09,.10,8),glove);cuffL.rotation.z=Math.PI/2;cuffL.position.set(-.075,-.015,-.37);
+            rig.add(handR,handL,cuffR,cuffL);viewGun.add(rig);return rig
           }'''
-          s,n=re.subn(r"function addViewHands\(\)\{.*?\n\}\nfunction rebuildViewWeapon", hands+"\nfunction rebuildViewWeapon", s, count=1, flags=re.S)
-          if n!=1: raise SystemExit('hands patch target not found')
+          s,n=re.subn(r"function addViewHands\(\)\{.*?\n\}\nfunction rebuildViewWeapon",hands+"\nfunction rebuildViewWeapon",s,count=1,flags=re.S)
+          if n!=1: raise SystemExit('hands target not found')
 
-          # 3) Bullet collision: a container/wall must be checked before enemy hitboxes.
-          hitscan=r'''function hitscan(origin,dir,w,owner){
-            const ray=new T.Raycaster(origin,dir,0,w.range);
-            const blockers=world.map(o=>o.mesh).filter(Boolean);
-            const wallHits=ray.intersectObjects(blockers,false);
-            const wallDist=wallHits.length?wallHits[0].distance:Infinity;
-            if(owner===player){
-              if(!enemy?.alive)return false;
-              enemy.mesh.updateMatrixWorld(true);
-              const targets=[];
-              enemy.mesh.traverse(o=>{if(o.isMesh&&(o.name==='HEAD_HITBOX'||o.name==='BODY_HITBOX'))targets.push(o)});
-              const hits=ray.intersectObjects(targets,false);
-              if(!hits.length)return false;
-              const hit=hits[0];
-              if(hit.distance>wallDist)return false;
-              const head=hit.object.userData.hitZone==='head';
-              const dmg=head?w.headDamage:w.damage;
-              applyDamage(enemy,dmg,player,head);hitMarker(head);return true;
-            }else{
-              const pbox=new T.Mesh(new T.BoxGeometry(.9,2.2,.7));
-              pbox.position.set(player.pos.x,player.pos.y-.65,player.pos.z);pbox.updateMatrixWorld();
-              const hit=ray.intersectObject(pbox,false)[0];
-              if(hit&&hit.distance<=wallDist)applyDamage(player,w.damage,enemy,false);
-            }
-            return false
+          # Reload animation now returns the weapon and hands to the exact ready pose.
+          anim=r'''function updateWeaponAnimation(dt,moving,sprinting,crouch){
+            weaponAnimT+=dt;fireAnimT=Math.max(0,fireAnimT-dt);reloadAnimT=Math.max(0,reloadAnimT-dt);
+            const hands=viewGun.getObjectByName('TWO_HAND_RIG');if(!hands)return;
+            const cycle=moving?(sprinting?18:11):2.2;
+            const bob=moving?Math.sin(weaponAnimT*cycle):Math.sin(weaponAnimT*2.2)*.15;
+            const side=moving?Math.cos(weaponAnimT*cycle)*.018:0;
+            let targetY=-.34,targetZ=-.78,rx=0,rz=0;
+            if(aiming){targetY=-.30;targetZ=-.72;rx=-.025}
+            else if(sprinting){targetY=-.38;targetZ=-.70;rx=-.10;rz=-.025}
+            else if(slideT>0||crouch){targetY=-.43;targetZ=-.70;rx=.04}
+            if(fireAnimT>0){const p=fireAnimT/.16,k=Math.sin(p*Math.PI);targetY+=k*.055;targetZ+=k*.10;rx+=k*.10}
+            let reloadBlend=0;
+            if(reloadT>0){const p=1-reloadT/weapons[weaponIndex].reload;reloadBlend=Math.sin(Math.max(0,Math.min(1,p))*Math.PI);targetY-=reloadBlend*.12;targetZ+=reloadBlend*.08;rx+=reloadBlend*.42;rz+=Math.sin(p*Math.PI*2)*.08}
+            viewGun.position.x+=(.38+side-viewGun.position.x)*Math.min(1,dt*12);
+            viewGun.position.y+=(targetY+bob*.035-viewGun.position.y)*Math.min(1,dt*12);
+            viewGun.position.z+=(targetZ+Math.abs(bob)*.018-viewGun.position.z)*Math.min(1,dt*12);
+            viewGun.rotation.x+=(rx-viewGun.rotation.x)*Math.min(1,dt*12);
+            viewGun.rotation.z+=(rz-viewGun.rotation.z)*Math.min(1,dt*12);
+            # Hands stay anchored to the gun; only the whole rig follows the gun's reload motion.
+            const handRx=reloadBlend*.06,handRy=0,handRz=reloadBlend*.025;
+            hands.rotation.x+=(handRx-hands.rotation.x)*Math.min(1,dt*14);
+            hands.rotation.y+=(handRy-hands.rotation.y)*Math.min(1,dt*14);
+            hands.rotation.z+=(handRz-hands.rotation.z)*Math.min(1,dt*14);
+            hands.position.x+=(0-hands.position.x)*Math.min(1,dt*14);
+            hands.position.y+=(0-hands.position.y)*Math.min(1,dt*14);
+            hands.position.z+=(0-hands.position.z)*Math.min(1,dt*14);
           }'''
-          s,n=re.subn(r"function hitscan\(origin,dir,w,owner\)\{.*?\n\}\nfunction hitMarker", hitscan+"\nfunction hitMarker", s, count=1, flags=re.S)
-          if n!=1: raise SystemExit('hitscan patch target not found')
+          # Convert the two Python comments inside the JS replacement to JS comments.
+          anim=anim.replace('            # Hands stay anchored to the gun; only the whole rig follows the gun\'s reload motion.','            // Hands stay anchored to the gun; only the whole rig follows the gun\'s reload motion.')
+          s,n=re.subn(r"function updateWeaponAnimation\(dt,moving,sprinting,crouch\)\{.*?\n\}\nfunction startSlide",anim+"\nfunction startSlide",s,count=1,flags=re.S)
+          if n!=1: raise SystemExit('animation target not found')
 
-          # 4) Keep body/head hit zones separated so chest shots cannot accidentally count as headshots.
-          s=s.replace("new T.BoxGeometry(.82,.98,.62));body.position.y=1.38;", "new T.BoxGeometry(.82,.88,.62));body.position.y=1.32;")
-          s=s.replace("new T.SphereGeometry(.30,10,8));head.position.y=2.05;", "new T.SphereGeometry(.26,10,8));head.position.y=2.03;")
+          # Prevent the old delayed recoil reset from fighting the reload animation.
+          s=s.replace("viewGun.position.z=-.68;setTimeout(()=>viewGun.position.z=-.78,60);updateHUD()", "viewGun.position.z=Math.max(viewGun.position.z,-.68);updateHUD()")
+
+          # Team-aware, more detailed low-poly soldier model. Blue = WAREHAUL, red = OVERGHAST.
+          model=r'''function humanoid(team='red'){const blue=team==='blue',primary=blue?0x2563b8:0xb52b3b,secondary=blue?0x163b70:0x681d28,accent=blue?0x60a5fa:0xf87171,skin=0xc98d69,dark=0x20262b,helmetC=blue?0x1d4ed8:0x991b1b;const g=new T.Group(),parts={};
+            parts.pelvis=limb(.60,.30,.38,dark);parts.pelvis.position.y=.82;g.add(parts.pelvis);
+            parts.torso=limb(.76,.82,.42,primary);parts.torso.position.y=1.38;g.add(parts.torso);
+            parts.vest=limb(.80,.50,.46,secondary);parts.vest.position.set(0,1.42,-.02);g.add(parts.vest);
+            const plate=new T.Mesh(new T.BoxGeometry(.46,.28,.025),mat(accent,.55,.15));plate.position.set(0,1.48,-.245);g.add(plate);
+            parts.head=new T.Mesh(new T.SphereGeometry(.25,12,8),mat(skin));parts.head.position.y=2.05;g.add(parts.head);
+            const helmet=new T.Mesh(new T.SphereGeometry(.29,12,8,0,Math.PI*2,0,Math.PI*.60),mat(helmetC,.48,.25));helmet.position.y=2.14;g.add(helmet);
+            const visor=new T.Mesh(new T.BoxGeometry(.34,.08,.08),mat(dark,.35,.3));visor.position.set(0,2.08,-.235);g.add(visor);
+            parts.armL=limb(.18,.72,.18,primary);parts.armR=limb(.18,.72,.18,primary);parts.armL.position.set(-.48,1.38,0);parts.armR.position.set(.48,1.38,0);
+            const padL=new T.Mesh(new T.BoxGeometry(.27,.18,.25),mat(accent));padL.position.set(-.50,1.69,0);const padR=padL.clone();padR.position.x=.50;g.add(padL,padR);
+            parts.legL=limb(.20,.80,.22,dark);parts.legR=limb(.20,.80,.22,dark);parts.legL.position.set(-.21,.43,0);parts.legR.position.set(.21,.43,0);g.add(parts.armL,parts.armR,parts.legL,parts.legR);
+            const bootL=limb(.23,.18,.30,0x11151a);bootL.position.set(-.21,.06,-.04);const bootR=bootL.clone();bootR.position.x=.21;g.add(bootL,bootR);
+            const pack=limb(.48,.58,.20,secondary);pack.position.set(0,1.25,.25);g.add(pack);
+            const gun=weaponModel(0);gun.scale.set(.42,.42,.42);gun.position.set(.42,1.18,-.34);g.add(gun);g.userData.parts=parts;g.userData.team=team;return g}
+          s,n=re.subn(r"function humanoid\(\)\{.*?\n\}\nfunction spawnEnemy",model+"\nfunction spawnEnemy",s,count=1,flags=re.S)
+          if n!=1: raise SystemExit('humanoid target not found')
+
+          # Spawn the opponent as OVERGHAST red; player side is WAREHAUL blue.
+          s=s.replace("const mesh=humanoid();mesh.position.set(0,0,-10);", "const mesh=humanoid('red');mesh.position.set(0,0,-10);")
+          s=s.replace("name:mode==='online'?'PLAYER-OPPONENT':'AI WOLF'", "name:mode==='tdm'?'OVERGHAST RED':'OVERGHAST'")
+
+          # Make TEAM ARENA launch a playable team-branded practice fight instead of an alert.
+          s=s.replace("document.getElementById('tdm').onclick=()=>alert('Team Arena is kept for the full arena build. 1v1 Lonewolf is the active mode.');", "document.getElementById('tdm').onclick=()=>beginMatch('tdm');")
+          s=s.replace("document.getElementById('lonewolf').onclick=()=>{hide('menu');show('modeMenu')};", "document.getElementById('lonewolf').onclick=()=>{hide('menu');show('modeMenu')};")
+
+          # Team banner text in the HUD.
+          s=s.replace("function beginMatch(m){mode=m;", "function beginMatch(m){mode=m;")
+          s=s.replace("document.getElementById('menu').classList.add('hidden');document.getElementById('modeMenu').classList.add('hidden');document.getElementById('queue').classList.add('hidden');initAudio();resetRound()", "document.getElementById('menu').classList.add('hidden');document.getElementById('modeMenu').classList.add('hidden');document.getElementById('queue').classList.add('hidden');const tb=document.getElementById('teamBanner');if(tb)tb.innerHTML='<b>WAREHAUL</b> <span>BLUE TEAM</span><i>VS</i><strong>OVERGHAST</strong> <span class=red>RED TEAM</span>';initAudio();resetRound()")
 
           p.write_text(s,encoding='utf-8')
-          print('Patched',p)
+
+          # Add the team banner without needing a separate CSS file.
+          q=Path('krunker-clone/index.html')
+          h=q.read_text(encoding='utf-8')
+          if 'id="teamBanner"' not in h:
+            h=h.replace('<div class="top"><b>1v1 LONEWOLF</b><span id="roundScore">0 — 0</span><b id="roundTimer">00:55</b></div>', '<div class="top"><b>1v1 LONEWOLF</b><span id="roundScore">0 — 0</span><b id="roundTimer">00:55</b></div><div id="teamBanner" style="position:absolute;top:42px;left:50%;transform:translateX(-50%);font:800 12px Arial,sans-serif;letter-spacing:1.2px;padding:7px 14px;border:1px solid rgba(255,255,255,.18);background:rgba(8,12,16,.58);border-radius:999px;white-space:nowrap;z-index:5;color:#dbeafe"><b>WAREHAUL</b> <span style="color:#60a5fa">BLUE TEAM</span><i style="font-style:normal;margin:0 10px;color:#94a3b8">VS</i><strong style="color:#fca5a5">OVERGHAST</strong> <span style="color:#f87171">RED TEAM</span></div>')
+            q.write_text(h,encoding='utf-8')
+          print('FPS patch complete')
       - name: Commit changes and remove temporary workflow
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add krunker-clone/game.js krunker-clone/index.html
           git rm .github/workflows/fix-fps-bugs.yml
-          git add krunker-clone/game.js
-          git commit -m "Fix recoil, two-hand weapon grip, and wall bullet collision"
+          git commit -m "Fix reload hand reset and add Warehaul Overghast teams"
           git push
