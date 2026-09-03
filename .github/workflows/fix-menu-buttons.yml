@@ -1,0 +1,71 @@
+name: Fix menu buttons
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'krunker-clone/game.js'
+      - '.github/workflows/fix-menu-buttons.yml'
+jobs:
+  fix:
+    if: "!contains(github.event.head_commit.message, '[menu-fix]')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fix JavaScript syntax and menu bindings
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('krunker-clone/game.js')
+          s=p.read_text()
+          # Repair malformed ternaries in the first-person weapon model.
+          reps={
+            'first?.24:.4':'first ? .24 : .4',
+            'first?.17:.27':'first ? .17 : .27',
+            'first?.72:1.35':'first ? .72 : 1.35',
+            'first?.20:.3':'first ? .20 : .3',
+            'first?.11:.14':'first ? .11 : .14',
+            'first?.50:.95':'first ? .50 : .95',
+            'first?.035:.06':'first ? .035 : .06',
+            'first?.04:.065':'first ? .04 : .065',
+            'first?.38:.78':'first ? .38 : .78',
+            'first?.13:.16':'first ? .13 : .16',
+            'first?.30:.33':'first ? .30 : .33',
+            'first?.15:.2':'first ? .15 : .2',
+          }
+          for a,b in reps.items(): s=s.replace(a,b)
+          # Add a second, independent click binding so menu navigation remains reliable.
+          marker='/* HAMU_MENU_BUTTONS_FIX_V1 */'
+          if marker not in s:
+            block=r'''/* HAMU_MENU_BUTTONS_FIX_V1 */
+(function(){
+  const byId=id=>document.getElementById(id);
+  const show=id=>{const e=byId(id);if(e)e.classList.remove('hidden')};
+  const hide=id=>{const e=byId(id);if(e)e.classList.add('hidden')};
+  function go(id, target){
+    const e=byId(id); if(!e)return;
+    e.addEventListener('click', function(ev){
+      ev.preventDefault(); ev.stopPropagation();
+      if(id==='lonewolf'){hide('menu');show('modeMenu');return;}
+      if(id==='fightAI' && typeof beginMatch==='function'){hide('modeMenu');beginMatch('ai');return;}
+      if(id==='cancelQueue'){hide('queue');show('modeMenu');return;}
+    }, true);
+  }
+  go('lonewolf');go('fightAI');go('cancelQueue');
+  const back=document.querySelector('[data-back="menu"]');
+  if(back)back.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();hide('modeMenu');show('menu')},true);
+})();
+'''
+            idx=s.rfind('})();')
+            if idx<0: raise SystemExit('Could not locate game.js IIFE end')
+            s=s[:idx]+block+s[idx:]
+          p.write_text(s)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add krunker-clone/game.js
+          if git diff --cached --quiet; then echo 'No changes needed'; exit 0; fi
+          git commit -m 'Fix menu buttons and JavaScript syntax [menu-fix]'
+          git push
