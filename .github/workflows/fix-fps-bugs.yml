@@ -1,4 +1,4 @@
-name: Fix FPS reload grip and combat models
+name: Fix FPS reload and model errors
 on:
   push:
     branches: [main]
@@ -10,14 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Apply robust reload and low-poly combat model patch
+      - name: Patch game safely
         shell: python
         run: |
           from pathlib import Path
           import re
-          p=Path('krunker-clone/game.js');s=p.read_text(encoding='utf-8')
-          hands=r'''function addViewHands(){
-            const skin=mat(0xb87858,.82,.02),sleeve=mat(0x222a31,.86,.03),glove=mat(0x343a40,.72,.08);
+          p=Path('krunker-clone/game.js')
+          s=p.read_text(encoding='utf-8')
+
+          hands="""function addViewHands(){
+            const skin=mat(0xb87858,.82,.02),sleeve=mat(0x252b30,.86,.03),glove=mat(0x343a40,.72,.08);
             const rig=new T.Group();rig.name='TWO_HAND_RIG';rig.position.set(0,0,0);rig.rotation.set(0,0,0);
             function seg(a,b,r,m){const v=new T.Vector3().subVectors(b,a);const mesh=new T.Mesh(new T.CylinderGeometry(r,r,v.length(),7),m);mesh.position.copy(a).add(b).multiplyScalar(.5);mesh.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),v.normalize());return mesh}
             const rElbow=new T.Vector3(.28,-.40,.12),rWrist=new T.Vector3(.015,-.205,-.06),lElbow=new T.Vector3(-.30,-.40,.10),lWrist=new T.Vector3(-.10,-.015,-.49);
@@ -25,35 +27,42 @@ jobs:
             const handR=new T.Mesh(new T.BoxGeometry(.18,.14,.27),skin);handR.position.set(.015,-.205,-.075);handR.rotation.set(-.12,0,-.03);handR.name='RIGHT_GRIP_HAND';
             const handL=new T.Mesh(new T.BoxGeometry(.18,.14,.27),skin);handL.position.set(-.10,-.015,-.50);handL.rotation.set(-.10,0,.03);handL.name='LEFT_SUPPORT_HAND';
             const cuffR=new T.Mesh(new T.CylinderGeometry(.09,.09,.10,8),glove);cuffR.rotation.z=Math.PI/2;cuffR.position.set(.015,-.205,.025);const cuffL=cuffR.clone();cuffL.position.set(-.10,-.015,-.395);rig.add(handR,handL,cuffR,cuffL);viewGun.add(rig);return rig
-          }'''
-          s,n=re.subn(r"function addViewHands\(\)\{.*?\n\}\nfunction rebuildViewWeapon",hands+"\nfunction rebuildViewWeapon",s,count=1,flags=re.S)
-          if n!=1: raise SystemExit('addViewHands not found')
-          anim=r'''function updateWeaponAnimation(dt,moving,sprinting,crouch){
+          }"""
+          s,n=re.subn(r"function addViewHands\(\)\{.*?(?=function rebuildViewWeapon)",hands+'\n',s,count=1,flags=re.S)
+          if n!=1: raise SystemExit('hands marker not found')
+
+          anim="""function updateWeaponAnimation(dt,moving,sprinting,crouch){
             weaponAnimT+=dt;fireAnimT=Math.max(0,fireAnimT-dt);reloadAnimT=Math.max(0,reloadAnimT-dt);const hands=viewGun.getObjectByName('TWO_HAND_RIG');if(!hands)return;
-            const k=moving?(sprinting?18:11),bob=moving?Math.sin(weaponAnimT*k):Math.sin(weaponAnimT*2.2)*.12,side=moving?Math.cos(weaponAnimT*k)*.015:0;
+            const k=moving?(sprinting?18:11):2.2,bob=moving?Math.sin(weaponAnimT*k):Math.sin(weaponAnimT*2.2)*.12,side=moving?Math.cos(weaponAnimT*k)*.015:0;
             let x=.38+side,y=-.34+bob*.035,z=-.78+Math.abs(bob)*.018,rx=0,rz=0;
             if(aiming){y=-.30;z=-.72;rx=-.025}else if(sprinting){y=-.38;z=-.70;rx=-.10;rz=-.025}else if(slideT>0||crouch){y=-.43;z=-.70;rx=.04}
             if(fireAnimT>0){const q=Math.sin((fireAnimT/.16)*Math.PI);y+=q*.045;z+=q*.08;rx+=q*.08}
-            const reloading=reloadT>0;if(reloading){const p=Math.max(0,Math.min(1,1-reloadT/weapons[weaponIndex].reload)),q=Math.sin(p*Math.PI);y-=q*.12;z+=q*.08;rx+=q*.42;rz+=Math.sin(p*Math.PI*2)*.08}
-            const smooth=Math.min(1,dt*14);viewGun.position.x+=(x-viewGun.position.x)*smooth;viewGun.position.y+=(y-viewGun.position.y)*smooth;viewGun.position.z+=(z-viewGun.position.z)*smooth;viewGun.rotation.x+=(rx-viewGun.rotation.x)*smooth;viewGun.rotation.y+=(0-viewGun.rotation.y)*smooth;viewGun.rotation.z+=(rz-viewGun.rotation.z)*smooth;
-            if(reloading){const q=Math.sin((1-reloadT/weapons[weaponIndex].reload)*Math.PI);hands.rotation.x+=(q*.06-hands.rotation.x)*smooth;hands.rotation.z+=(q*.025-hands.rotation.z)*smooth}else{hands.position.set(0,0,0);hands.rotation.set(0,0,0)}
-          }'''
-          s,n=re.subn(r"function updateWeaponAnimation\(dt,moving,sprinting,crouch\)\{.*?\n\}\nfunction startSlide",anim+"\nfunction startSlide",s,count=1,flags=re.S)
-          if n!=1: raise SystemExit('updateWeaponAnimation not found')
-          s=s.replace("reloadT=Math.max(0,reloadT-dt);", "reloadT=Math.max(0,reloadT-dt);if(reloadT===0){const hg=viewGun.getObjectByName('TWO_HAND_RIG');if(hg){hg.position.set(0,0,0);hg.rotation.set(0,0,0);}}")
-          model=r'''function humanoid(team='red'){const blue=team==='blue',primary=blue?0x2563eb:0xc6283b,secondary=blue?0x173b73:0x671a25,accent=blue?0x60a5fa:0xf87171,dark=0x1b2229,skin=0xc98d69,helmetC=blue?0x1d4ed8:0x991b1b;const g=new T.Group(),parts={};const add=(o,n)=>{o.name=n;g.add(o);return o};parts.pelvis=add(limb(.60,.30,.38,dark),'PELVIS');parts.pelvis.position.y=.82;parts.torso=add(limb(.78,.82,.44,primary),'TORSO');parts.torso.position.y=1.38;parts.vest=add(limb(.82,.52,.47,secondary),'TACTICAL_VEST');parts.vest.position.set(0,1.40,-.02);const plate=add(new T.Mesh(new T.BoxGeometry(.48,.30,.035),mat(accent,.5,.15)),'CHEST_PLATE');plate.position.set(0,1.48,-.255);const belt=add(new T.Mesh(new T.BoxGeometry(.76,.12,.48),mat(dark,.55,.12)),'BELT');belt.position.y=1.08;parts.head=add(new T.Mesh(new T.SphereGeometry(.255,10,8),mat(skin)),'HEAD');parts.head.position.y=2.05;const helmet=add(new T.Mesh(new T.SphereGeometry(.30,10,8,0,Math.PI*2,0,Math.PI*.62),mat(helmetC,.48,.25)),'COMBAT_HELMET');helmet.position.y=2.14;const visor=add(new T.Mesh(new T.BoxGeometry(.38,.085,.08),mat(dark,.3,.35)),'VISOR');visor.position.set(0,2.08,-.245);const earL=add(new T.Mesh(new T.BoxGeometry(.10,.18,.16),mat(dark,.5,.2)),'EAR_L');earL.position.set(-.28,2.04,0);const earR=earL.clone();earR.name='EAR_R';earR.position.x=.28;g.add(earR);parts.armL=add(limb(.19,.72,.19,primary),'ARM_L');parts.armR=add(limb(.19,.72,.19,primary),'ARM_R');parts.armL.position.set(-.49,1.38,0);parts.armR.position.set(.49,1.38,0);const padL=add(new T.Mesh(new T.BoxGeometry(.29,.18,.27),mat(accent,.55,.12)),'SHOULDER_L');padL.position.set(-.51,1.69,0);const padR=padL.clone();padR.name='SHOULDER_R';padR.position.x=.51;g.add(padR);parts.legL=add(limb(.21,.80,.23,dark),'LEG_L');parts.legR=add(limb(.21,.80,.23,dark),'LEG_R');parts.legL.position.set(-.21,.43,0);parts.legR.position.set(.21,.43,0);const kneeL=add(new T.Mesh(new T.BoxGeometry(.25,.16,.25),mat(secondary,.65,.08)),'KNEE_L');kneeL.position.set(-.21,.50,-.12);const kneeR=kneeL.clone();kneeR.name='KNEE_R';kneeR.position.x=.21;g.add(kneeR);const bootL=add(limb(.24,.18,.32,dark),'BOOT_L');bootL.position.set(-.21,.06,-.045);const bootR=bootL.clone();bootR.name='BOOT_R';bootR.position.x=.21;g.add(bootR);const pack=add(limb(.50,.62,.22,secondary),'BACKPACK');pack.position.set(0,1.25,.26);const gun=weaponModel(0);gun.scale.set(.44,.44,.44);gun.position.set(.42,1.18,-.38);gun.rotation.y=-.08;add(gun,'COMBAT_RIFLE');const patch=add(new T.Mesh(new T.BoxGeometry(.22,.13,.02),mat(accent,.45,.05)),'TEAM_PATCH');patch.position.set(blue?-.39:.39,1.48,-.255);g.userData.parts=parts;g.userData.team=team;g.userData.teamName=blue?'WAREHAUL':'OVERGHAST';return g}'''
-          s,n=re.subn(r"function humanoid\(\)\{.*?\n\}\nfunction spawnEnemy",model+"\nfunction spawnEnemy",s,count=1,flags=re.S)
-          if n!=1: raise SystemExit('humanoid not found')
-          s=s.replace("const mesh=humanoid();mesh.position.set(0,0,-10);", "const mesh=humanoid('red');mesh.position.set(0,0,-10);")
-          s=s.replace("name:mode==='online'?'PLAYER-OPPONENT':'AI WOLF'", "name:mode==='tdm'?'OVERGHAST RED':'OVERGHAST'")
+            if(reloadT>0){const p=1-reloadT/weapons[weaponIndex].reload,q=Math.sin(Math.max(0,Math.min(1,p))*Math.PI);y-=q*.12;z+=q*.08;rx+=q*.42;rz+=Math.sin(Math.max(0,Math.min(1,p))*Math.PI*2)*.08}
+            const sm=Math.min(1,dt*14);viewGun.position.x+=(x-viewGun.position.x)*sm;viewGun.position.y+=(y-viewGun.position.y)*sm;viewGun.position.z+=(z-viewGun.position.z)*sm;viewGun.rotation.x+=(rx-viewGun.rotation.x)*sm;viewGun.rotation.y+=(0-viewGun.rotation.y)*sm;viewGun.rotation.z+=(rz-viewGun.rotation.z)*sm;
+            if(reloadT<=0){hands.position.set(0,0,0);hands.rotation.set(0,0,0)}else{hands.rotation.x+=(rx*.15-hands.rotation.x)*sm;hands.rotation.z+=(rz*.25-hands.rotation.z)*sm}
+          }
+          s,n=re.subn(r"function updateWeaponAnimation\(dt,moving,sprinting,crouch\)\{.*?(?=function startSlide)",anim+'\n',s,count=1,flags=re.S)
+          if n!=1: raise SystemExit('weapon animation marker not found')
+
+          model="""function humanoid(team='red'){const blue=team==='blue';const primary=blue?0x2563eb:0xc6283b,secondary=blue?0x173b73:0x671a25,accent=blue?0x60a5fa:0xf87171,dark=0x1b2229,skin=0xc98d69,helmetC=blue?0x1d4ed8:0x991b1b;const g=new T.Group(),parts={};const add=(o,n)=>{o.name=n;g.add(o);return o};parts.pelvis=add(limb(.60,.30,.38,dark),'PELVIS');parts.pelvis.position.y=.82;parts.torso=add(limb(.78,.82,.44,primary),'TORSO');parts.torso.position.y=1.38;parts.vest=add(limb(.82,.52,.47,secondary),'TACTICAL_VEST');parts.vest.position.set(0,1.40,-.02);const plate=add(new T.Mesh(new T.BoxGeometry(.48,.30,.035),mat(accent,.5,.15)),'CHEST_PLATE');plate.position.set(0,1.48,-.255);const belt=add(new T.Mesh(new T.BoxGeometry(.76,.12,.48),mat(dark,.55,.12)),'BELT');belt.position.y=1.08;parts.head=add(new T.Mesh(new T.SphereGeometry(.255,10,8),mat(skin)),'HEAD');parts.head.position.y=2.05;const helmet=add(new T.Mesh(new T.SphereGeometry(.30,10,8,0,Math.PI*2,0,Math.PI*.62),mat(helmetC,.48,.25)),'COMBAT_HELMET');helmet.position.y=2.14;const visor=add(new T.Mesh(new T.BoxGeometry(.38,.085,.08),mat(dark,.3,.35)),'VISOR');visor.position.set(0,2.08,-.245);parts.armL=add(limb(.19,.72,.19,primary),'ARM_L');parts.armR=add(limb(.19,.72,.19,primary),'ARM_R');parts.armL.position.set(-.49,1.38,0);parts.armR.position.set(.49,1.38,0);parts.legL=add(limb(.21,.80,.23,dark),'LEG_L');parts.legR=add(limb(.21,.80,.23,dark),'LEG_R');parts.legL.position.set(-.21,.43,0);parts.legR.position.set(.21,.43,0);const padL=add(new T.Mesh(new T.BoxGeometry(.29,.18,.27),mat(accent,.55,.12)),'SHOULDER_L');padL.position.set(-.51,1.69,0);const padR=padL.clone();padR.name='SHOULDER_R';padR.position.x=.51;g.add(padR);const kneeL=add(new T.Mesh(new T.BoxGeometry(.25,.16,.25),mat(secondary,.65,.08)),'KNEE_L');kneeL.position.set(-.21,.50,-.12);const kneeR=kneeL.clone();kneeR.name='KNEE_R';kneeR.position.x=.21;g.add(kneeR);const bootL=add(limb(.24,.18,.32,dark),'BOOT_L');bootL.position.set(-.21,.06,-.045);const bootR=bootL.clone();bootR.name='BOOT_R';bootR.position.x=.21;g.add(bootR);const pack=add(limb(.50,.62,.22,secondary),'BACKPACK');pack.position.set(0,1.25,.26);const gun=weaponModel(0);gun.scale.set(.44,.44,.44);gun.position.set(.42,1.18,-.38);gun.rotation.y=-.08;add(gun,'COMBAT_RIFLE');const patch=add(new T.Mesh(new T.BoxGeometry(.22,.13,.02),mat(accent,.45,.05)),'TEAM_PATCH');patch.position.set(blue?-.39:.39,1.48,-.255);g.userData.parts=parts;g.userData.team=team;g.userData.teamName=blue?'WAREHAUL':'OVERGHAST';return g}"""
+          s,n=re.subn(r"function humanoid\(\)\{.*?(?=function spawnEnemy)",model+'\n',s,count=1,flags=re.S)
+          if n!=1: raise SystemExit('humanoid marker not found')
+
+          s=s.replace("const mesh=humanoid();mesh.position.set(0,0,-10);","const mesh=humanoid('red');mesh.position.set(0,0,-10);")
+          s=s.replace("name:mode==='online'?'PLAYER-OPPONENT':'AI WOLF'","name:mode==='tdm'?'OVERGHAST RED':'OVERGHAST'")
+          s=s.replace("document.getElementById('tdm').onclick=()=>alert('Team Arena is kept for the full arena build. 1v1 Lonewolf is the active mode.');","document.getElementById('tdm').onclick=()=>beginMatch('tdm');")
+
           p.write_text(s,encoding='utf-8')
-          q=Path('krunker-clone/index.html');h=q.read_text(encoding='utf-8');h=h.replace("document.getElementById('tdm').onclick=()=>alert('Team Arena is kept for the full arena build. 1v1 Lonewolf is the active mode.');", "document.getElementById('tdm').onclick=()=>beginMatch('tdm');");q.write_text(h,encoding='utf-8')
+          # basic structural validation
+          t=p.read_text(encoding='utf-8')
+          for marker in ['function addViewHands(){','function updateWeaponAnimation(','function humanoid(team=\'red\')','humanoid(\'red\')','WAREHAUL','OVERGHAST']:
+              if marker not in t: raise SystemExit('missing '+marker)
           print('PATCH_OK')
-      - name: Commit changes and remove temporary workflow
+      - name: Commit patched game
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add krunker-clone/game.js krunker-clone/index.html
           git rm .github/workflows/fix-fps-bugs.yml
-          git commit -m 'Fix reload hands and inject Warehaul Overghast combat models'
+          git commit -m 'Fix reload hand reset and WAREHAUL OVERGHAST models'
           git push
