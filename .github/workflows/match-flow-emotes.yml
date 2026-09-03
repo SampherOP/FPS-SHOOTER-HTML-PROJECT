@@ -1,0 +1,43 @@
+name: Add Lonewolf Match Flow + Emotes
+
+on:
+  push:
+    paths:
+      - 'krunker-clone/game.js'
+      - 'krunker-clone/index.html'
+      - 'krunker-clone/style.css'
+      - '.github/workflows/match-flow-emotes.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "!contains(github.event.head_commit.message, '[match-flow-emotes]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch game logic
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('krunker-clone/game.js')
+          s=p.read_text(encoding='utf-8')
+          marker='/* HAMU_MATCH_FLOW_EMOTES_V1 */'
+          if marker in s:
+              print('already patched')
+              raise SystemExit(0)
+          code=r'''\n/* HAMU_MATCH_FLOW_EMOTES_V1 */\n(function(){\n  const VICTORY_DELAY=3, FINAL_DELAY=4.5, MAX_ROUND_WINS=5;\n  let flowBusy=false, spectating=false, emoteOpen=false, emoteText='GG';\n  const spawnPlayer=new T.Vector3(0,1.75,10), spawnEnemy=new T.Vector3(0,0,-10);\n  function ensureFlowUI(){\n    if(document.getElementById('hamuFlowOverlay')) return;\n    const o=document.createElement('div');o.id='hamuFlowOverlay';o.className='hamu-flow-overlay';\n    o.innerHTML='<div id="hamuFlowTitle"></div><div id="hamuFlowSub"></div>';document.body.appendChild(o);\n    const e=document.createElement('div');e.id='hamuEmotes';e.className='hamu-emotes hidden';\n    e.innerHTML='<div class="emote-head">EMOTES <small>B</small></div><div class="emote-grid">'+['GG','NICE','LOL','BOOYAAH!','🔥','👑'].map(x=>'<button data-emote="'+x+'">'+x+'</button>').join('')+'</div>';document.body.appendChild(e);\n    e.querySelectorAll('button').forEach(b=>b.onclick=()=>doEmote(b.dataset.emote));\n  }\n  function flowShow(title,sub,cls){ensureFlowUI();const o=document.getElementById('hamuFlowOverlay');o.className='hamu-flow-overlay '+(cls||'');document.getElementById('hamuFlowTitle').textContent=title;document.getElementById('hamuFlowSub').textContent=sub||'';o.classList.remove('hidden');}\n  function flowHide(){const o=document.getElementById('hamuFlowOverlay');if(o)o.classList.add('hidden');}\n  function hideBaseResults(){['result','roundResult'].forEach(id=>{const e=document.getElementById(id);if(e)e.classList.add('hidden')});}\n  function resetPositions(){player.pos.copy(spawnPlayer);player.vel.set(0,0,0);player.hp=100;player.armor=50;player.alive=true;player.onGround=true;if(enemy){enemy.pos.copy(spawnEnemy);enemy.hp=100;enemy.armor=30;enemy.alive=true;enemy.shoot=.8;enemy.think=.1;}yaw=0;pitch=0;camera.position.set(0,0,0);}\n  function openShopAndResume(){\n    flowHide();hideBaseResults();spectating=false;resetPositions();\n    phase='buy';buyTime=5;running=true;paused=false;locked=false;\n    const sh=document.getElementById('shop');if(sh)sh.classList.remove('hidden');\n    const bt=document.getElementById('buyTimer');if(bt)bt.textContent='5.0';\n    if(enemy) enemy.alive=true;\n  }\n  function finalLobby(){\n    flowHide();hideBaseResults();spectating=false;running=false;paused=false;phase='menu';locked=false;\n    const hud=document.getElementById('hud');if(hud)hud.classList.add('hidden');\n    const shop=document.getElementById('shop');if(shop)shop.classList.add('hidden');\n    const menu=document.getElementById('menu');if(menu)menu.classList.remove('hidden');\n    round=1;roundWins=0;enemyWins=0;\n  }\n  function watchShopTimer(){\n    if(phase==='buy' && buyTime<=0){const sh=document.getElementById('shop');if(sh)sh.classList.add('hidden');phase='fight';running=true;locked=false;flowHide();}\n  }\n  function spectate(){\n    spectating=true;locked=false;flowShow('DEFEAT','SPECTATING OPPONENT','defeat');\n    if(enemy){camera.position.copy(enemy.pos);camera.position.y=1.75;camera.lookAt(enemy.pos.x,1.45,enemy.pos.z);}\n  }\n  function handleWin(){\n    if(flowBusy)return;flowBusy=true;roundWins++;\n    if(roundWins>=MAX_ROUND_WINS){flowShow('BOOYAAH!','MATCH WON · LOBBY IN 4.5s','booyah');playMP3('victory',1);setTimeout(finalLobby,FINAL_DELAY*1000);return;}\n    flowShow('VICTORY','ROUND '+round+' WON · NEXT BUY PHASE IN 3s','victory');playMP3('victory',.9);\n    setTimeout(()=>{flowBusy=false;round++;openShopAndResume();},VICTORY_DELAY*1000);\n  }\n  function handleLoss(){\n    if(flowBusy)return;flowBusy=true;enemyWins++;\n    if(enemyWins>=MAX_ROUND_WINS){flowShow('DEFEAT','MATCH LOST · LOBBY IN 4.5s','defeat');playMP3('defeat',1);setTimeout(finalLobby,FINAL_DELAY*1000);return;}\n    spectate();\n    setTimeout(()=>{flowBusy=false;round++;openShopAndResume();},VICTORY_DELAY*1000);\n  }\n  const oldApplyDamage=applyDamage;\n  applyDamage=function(v,amount,att,head){\n    const before=v&&typeof v.hp==='number'?v.hp:0;\n    const dealt=oldApplyDamage(v,amount,att,head);\n    if(v===enemy && before>0 && enemy.hp<=0 && enemy.alive===false) handleWin();\n    if(v===player && before>0 && player.hp<=0 && player.alive===false) handleLoss();\n    return dealt;\n  };\n  function doEmote(t){\n    emoteText=t;const e=document.getElementById('hamuEmotes');if(e)e.classList.add('hidden');emoteOpen=false;\n    const toast=document.createElement('div');toast.className='hamu-emote-pop';toast.textContent=t;document.body.appendChild(toast);setTimeout(()=>toast.remove(),1800);\n  }\n  addEventListener('keydown',ev=>{\n    if(ev.code==='KeyB' && phase!=='menu' && phase!=='queue'){emoteOpen=!emoteOpen;ensureFlowUI();document.getElementById('hamuEmotes').classList.toggle('hidden',!emoteOpen);ev.preventDefault();}\n  });\n  ensureFlowUI();\n  const oldAnimate=window.__hamuOldAnimate;\n  const originalRAF=window.requestAnimationFrame;\n  // Lightweight timer watcher; does not replace the existing render loop.\n  setInterval(watchShopTimer,50);\n  setInterval(()=>{\n    if(spectating && enemy && enemy.alive){camera.position.copy(enemy.pos);camera.position.y=1.75;}\n    const score=document.getElementById('roundScore');if(score)score.textContent=roundWins+' — '+enemyWins;\n  },100);\n})();\n'''
+          needle='})();'
+          idx=s.rfind(needle)
+          if idx<0: raise SystemExit('Could not find game IIFE end')
+          s=s[:idx]+code+s[idx:]
+          p.write_text(s,encoding='utf-8')
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add krunker-clone/game.js
+          git diff --cached --quiet || git commit -m 'Add victory defeat match flow and emotes [match-flow-emotes]'
+          git push
