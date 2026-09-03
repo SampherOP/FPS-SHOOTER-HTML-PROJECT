@@ -7,7 +7,7 @@
 <section id="result" class="screen hidden"><div class="panel"><div id="resultTitle">ROUND WON</div><div id="resultSub"></div><button id="nextRound">NEXT ROUND</button><button id="leaveMatch" class="secondary">LEAVE TO MENU</button></div></section>
 <section id="pause" class="screen hidden"><div class="panel"><h1>PAUSED</h1><button id="resume">RESUME</button><button id="leavePause" class="secondary">LEAVE MATCH</button></div></section>
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script><script>
-/* Runtime syntax repair for the existing game.js weapon model. Keeps the rest of the game unchanged. */
+/* Load game.js after repairing the two syntax-corruption patterns that currently prevent the whole file from executing. */
 fetch('game.js').then(r=>r.text()).then(s=>{
   const fixes={
     'first?.24:.4':'first ? .24 : .4','first?.17:.27':'first ? .17 : .27','first?.72:1.35':'first ? .72 : 1.35',
@@ -16,6 +16,10 @@ fetch('game.js').then(r=>r.text()).then(s=>{
     'first?.13:.16':'first ? .13 : .16','first?.30:.33':'first ? .30 : .33','first?.15:.2':'first ? .15 : .2'
   };
   for(const [bad,good] of Object.entries(fixes)) s=s.split(bad).join(good);
-  const script=document.createElement('script');script.text=s;document.body.appendChild(script);
+  /* A previous automated edit left a standalone backslash before the match-flow block. Remove it. */
+  s=s.replace(/^\\\s*$/gm,'');
+  const script=document.createElement('script');
+  script.text=s;
+  document.body.appendChild(script);
 }).catch(e=>console.error('game.js load failed',e));
 </script></body></html>
