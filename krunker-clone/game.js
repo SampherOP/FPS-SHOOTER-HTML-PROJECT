@@ -30,7 +30,7 @@ function loadMP3(){if(Object.keys(mp3).length)return;['deagle','smg','rifle','sh
 function playMP3(name,volume=.8){initAudio();const a=mp3[name];if(!a)return;try{a.pause();a.currentTime=0;a.volume=volume;const q=a.play();if(q?.catch)q.catch(()=>{})}catch(e){}}
 function gunSound(kind){playMP3(kind,kind==='shotgun'?.9:.72)}function reloadSound(){playMP3('reload',.65)}
 function showDamageNumber(amount,head){const el=document.createElement('div');el.className='damageNumber '+(head?'head':'body');el.textContent='-'+Math.max(1,Math.round(amount));document.getElementById('labels').appendChild(el);const v=enemy.mesh.position.clone();v.y=head?2.55:2.15;v.project(camera);el.style.left=((v.x*.5+.5)*innerWidth)+'px';el.style.top=((-v.y*.5+.5)*innerHeight)+'px';setTimeout(()=>el.remove(),650);requestAnimationFrame(()=>el.classList.add('damageFly'));playMP3(head?'headshot':'hit',head?.75:.42)}
-// FIX: damage is now resolved atomically and a round can only be won when the enemy's actual HP reaches zero.
+// FIX: HP subtraction uses explicit parentheses so both player and NPC health decrease correctly.
 function applyDamage(v,amount,att,head=false){
  if(!v||v.alive===false)return 0;
  const raw=Math.max(0,Number(amount)||0);
@@ -38,7 +38,7 @@ function applyDamage(v,amount,att,head=false){
  const absorbed=Math.min(armorBefore,raw*.5);
  const dealt=Math.max(0,raw-absorbed);
  v.armor=Math.max(0,armorBefore-absorbed);
- v.hp=Math.max(0,Number(v.hp)||0-dealt);
+ v.hp=Math.max(0,(Number(v.hp)||0)-dealt);
  if(v!==player)showDamageNumber(dealt,head);
  if(v===player){document.getElementById('damage').style.opacity=.55;setTimeout(()=>document.getElementById('damage').style.opacity=0,100);shake=.07}
  updateHUD();
