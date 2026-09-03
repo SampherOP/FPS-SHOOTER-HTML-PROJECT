@@ -1,0 +1,79 @@
+name: Fix FPS gameplay bugs
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/fix-fps-bugs.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch recoil, hands and bullet collision
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          p=Path('krunker-clone/game.js')
+          s=p.read_text(encoding='utf-8')
+
+          # 1) Recoil: mouse pitch uses pitch -= movementY, so negative pitch is up.
+          s=s.replace("pitch=Math.min(1.3,pitch-w.recoil*(aiming?.55:1));", "pitch=Math.max(-1.3,pitch-w.recoil*(aiming?.55:1));")
+
+          # 2) Make the first-person hands actually wrap the weapon instead of floating beside it.
+          hands=r'''function addViewHands(){
+            const skin=mat(0xb87858,.82,.02),sleeve=mat(0x252b30,.85,.03);
+            const rig=new T.Group();rig.name='TWO_HAND_RIG';
+            const armR=new T.Mesh(new T.BoxGeometry(.16,.16,.48),sleeve);armR.position.set(.18,-.015,.02);armR.rotation.set(-.38,.05,-.16);
+            const handR=new T.Mesh(new T.BoxGeometry(.18,.13,.22),skin);handR.position.set(.06,-.035,-.25);handR.rotation.set(-.15,0,-.08);
+            const armL=new T.Mesh(new T.BoxGeometry(.16,.16,.50),sleeve);armL.position.set(-.18,-.015,-.12);armL.rotation.set(-.52,-.05,.16);
+            const handL=new T.Mesh(new T.BoxGeometry(.18,.13,.22),skin);handL.position.set(-.07,-.025,-.43);handL.rotation.set(-.12,0,.08);
+            rig.add(armR,handR,armL,handL);viewGun.add(rig);return rig
+          }'''
+          s,n=re.subn(r"function addViewHands\(\)\{.*?\n\}\nfunction rebuildViewWeapon", hands+"\nfunction rebuildViewWeapon", s, count=1, flags=re.S)
+          if n!=1: raise SystemExit('hands patch target not found')
+
+          # 3) Bullet collision: a container/wall must be checked before enemy hitboxes.
+          hitscan=r'''function hitscan(origin,dir,w,owner){
+            const ray=new T.Raycaster(origin,dir,0,w.range);
+            const blockers=world.map(o=>o.mesh).filter(Boolean);
+            const wallHits=ray.intersectObjects(blockers,false);
+            const wallDist=wallHits.length?wallHits[0].distance:Infinity;
+            if(owner===player){
+              if(!enemy?.alive)return false;
+              enemy.mesh.updateMatrixWorld(true);
+              const targets=[];
+              enemy.mesh.traverse(o=>{if(o.isMesh&&(o.name==='HEAD_HITBOX'||o.name==='BODY_HITBOX'))targets.push(o)});
+              const hits=ray.intersectObjects(targets,false);
+              if(!hits.length)return false;
+              const hit=hits[0];
+              if(hit.distance>wallDist)return false;
+              const head=hit.object.userData.hitZone==='head';
+              const dmg=head?w.headDamage:w.damage;
+              applyDamage(enemy,dmg,player,head);hitMarker(head);return true;
+            }else{
+              const pbox=new T.Mesh(new T.BoxGeometry(.9,2.2,.7));
+              pbox.position.set(player.pos.x,player.pos.y-.65,player.pos.z);pbox.updateMatrixWorld();
+              const hit=ray.intersectObject(pbox,false)[0];
+              if(hit&&hit.distance<=wallDist)applyDamage(player,w.damage,enemy,false);
+            }
+            return false
+          }'''
+          s,n=re.subn(r"function hitscan\(origin,dir,w,owner\)\{.*?\n\}\nfunction hitMarker", hitscan+"\nfunction hitMarker", s, count=1, flags=re.S)
+          if n!=1: raise SystemExit('hitscan patch target not found')
+
+          # 4) Keep body/head hit zones separated so chest shots cannot accidentally count as headshots.
+          s=s.replace("new T.BoxGeometry(.82,.98,.62));body.position.y=1.38;", "new T.BoxGeometry(.82,.88,.62));body.position.y=1.32;")
+          s=s.replace("new T.SphereGeometry(.30,10,8));head.position.y=2.05;", "new T.SphereGeometry(.26,10,8));head.position.y=2.03;")
+
+          p.write_text(s,encoding='utf-8')
+          print('Patched',p)
+      - name: Commit changes and remove temporary workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/fix-fps-bugs.yml
+          git add krunker-clone/game.js
+          git commit -m "Fix recoil, two-hand weapon grip, and wall bullet collision"
+          git push
