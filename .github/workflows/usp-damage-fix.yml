@@ -1,0 +1,30 @@
+name: Apply USP Damage Fix
+on:
+  push:
+    paths:
+      - '.github/workflows/usp-damage-fix.yml'
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch USP damage and name
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('krunker-clone/game.js')
+          s=p.read_text()
+          s=s.replace("{name:'DESERT EAGLE',price:500,mag:7,reserve:35,damage:70,headDamage:1000,rate:3.2", "{name:'USP',price:500,mag:7,reserve:35,damage:13,damageMin:9,damageMax:16,legDamage:4,headDamage:49,rate:3.2")
+          s=s.replace("const body=new T.Mesh(new T.BoxGeometry(.82,.98,.62));body.position.y=1.38;body.name='BODY_HITBOX';body.material.visible=false;body.userData.hitZone='body';mesh.add(body);const head=", "const body=new T.Mesh(new T.BoxGeometry(.82,.98,.62));body.position.y=1.38;body.name='BODY_HITBOX';body.material.visible=false;body.userData.hitZone='body';mesh.add(body);const legL=new T.Mesh(new T.BoxGeometry(.24,.82,.3));legL.position.set(-.2,.43,0);legL.name='LEG_L_HITBOX';legL.material.visible=false;legL.userData.hitZone='leg';mesh.add(legL);const legR=legL.clone();legR.position.x=.2;legR.name='LEG_R_HITBOX';mesh.add(legR);const head=")
+          s=s.replace("if(o.isMesh&&(o.name==='HEAD_HITBOX'||o.name==='BODY_HITBOX'))targets.push(o)", "if(o.isMesh&&(o.name==='HEAD_HITBOX'||o.name==='BODY_HITBOX'||o.name==='LEG_L_HITBOX'||o.name==='LEG_R_HITBOX'))targets.push(o)")
+          s=s.replace("const head=enemyHit.object.userData.hitZone==='head',dmg=head?w.headDamage:w.damage;applyDamage(enemy,dmg,player,head);", "const zone=enemyHit.object.userData.hitZone;const head=zone==='head';const leg=zone==='leg';const dmg=head?w.headDamage:leg?w.legDamage:(w.damageMin!==undefined?(w.damageMin+Math.random()*(w.damageMax-w.damageMin)):w.damage);applyDamage(enemy,dmg,player,head);")
+          p.write_text(s)
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add krunker-clone/game.js
+          git diff --cached --quiet || git commit -m 'Fix USP damage and rename Desert Eagle'
+          git push
